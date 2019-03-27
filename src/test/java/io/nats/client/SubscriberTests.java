@@ -70,7 +70,7 @@ public class SubscriberTests {
 
         NatsServerProtocolMock.Customizer receiveMessageCustomizer = (ts, r,w) -> {
             String subLine = "";
-            
+
             System.out.println("*** Mock Server @" + ts.getPort() + " waiting for SUB ...");
             try {
                 subLine = r.readLine();
@@ -472,6 +472,18 @@ public class SubscriberTests {
 
             sub.nextMessage(Duration.ofMillis(5000)); // Should throw
             assertTrue(false);
+        }
+    }
+
+    @Test
+    public void testSidIsAccessible() throws IOException, InterruptedException {
+        try (NatsTestServer ts = new NatsTestServer(false);
+                    Connection nc = Nats.connect(ts.getURI())) {
+            assertTrue("Connected Status", Connection.Status.CONNECTED == nc.getStatus());
+            Subscription sub = nc.subscribe("subject");
+            assertEquals("1", sub.getSID());
+            sub.unsubscribe();
+            nc.close();
         }
     }
 }
