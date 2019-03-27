@@ -263,7 +263,7 @@ class NatsConnection implements Connection {
         } catch (Exception exp) {
             this.processException(exp);
         }
-        
+
         // When the flush returns we are done sending internal messages, so we can switch to the
         // non-reconnect queue
         this.writer.setReconnectMode(false);
@@ -889,6 +889,10 @@ class NatsConnection implements Connection {
     }
 
     public Dispatcher createDispatcher(MessageHandler handler) {
+        return createDispatcher(handler, false);
+    }
+
+    public Dispatcher createDispatcher(MessageHandler handler, boolean allowDuplicateSubscriptions) {
         if (isClosed()) {
             throw new IllegalStateException("Connection is Closed");
         } else if (isDraining()) {
@@ -896,6 +900,7 @@ class NatsConnection implements Connection {
         }
 
         NatsDispatcher dispatcher = new NatsDispatcher(this, handler);
+        dispatcher.setAllowDuplicateSubscriptions(allowDuplicateSubscriptions);
         String id = this.nuid.next();
         this.dispatchers.put(id, dispatcher);
         dispatcher.start(id);
@@ -984,14 +989,14 @@ class NatsConnection implements Connection {
             String connectOptions = this.options.buildProtocolConnectOptionsString(serverURI, info.isAuthRequired(), info.getNonce());
             connectString.append(connectOptions);
             NatsMessage msg = new NatsMessage(connectString.toString());
-            
+
             queueInternalOutgoing(msg);
         } catch (Exception exp) {
             exp.printStackTrace();
             throw new IOException("Error sending connect string", exp);
         }
     }
-    
+
     CompletableFuture<Boolean> sendPing() {
         return this.sendPing(true);
     }
@@ -999,7 +1004,7 @@ class NatsConnection implements Connection {
     CompletableFuture<Boolean> softPing() {
         return this.sendPing(false);
     }
-    
+
     // Send a ping request and push a pong future on the queue.
     // futures are completed in order, keep this one if a thread wants to wait
     // for a specific pong. Note, if no pong returns the wait will not return
@@ -1513,7 +1518,7 @@ class NatsConnection implements Connection {
         } finally {
             this.statusLock.unlock();
         }
-        
+
         final CompletableFuture<Boolean> tracker = this.draining.get();
         Instant start = Instant.now();
 
@@ -1541,7 +1546,7 @@ class NatsConnection implements Connection {
         });
 
         this.flush(timeout); // Flush and wait up to the timeout, if this fails, let the caller know
-        
+
         consumers.forEach((cons) -> {
             cons.markUnsubedForDrain();
         });
@@ -1559,7 +1564,7 @@ class NatsConnection implements Connection {
                             i.remove();
                         }
                     }
-                    
+
                     if (consumers.size() == 0) {
                         break;
                     }

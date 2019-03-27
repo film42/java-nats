@@ -35,6 +35,7 @@ class NatsDispatcher extends NatsConsumer implements Dispatcher, Runnable {
     private Map<String, Map<String, NatsSubscription>> subscriptions;
     private Duration waitForMessage;
 
+    private boolean allowDuplicateSubscriptions;
 
     NatsDispatcher(NatsConnection conn, MessageHandler handler) {
         super(conn);
@@ -43,6 +44,11 @@ class NatsDispatcher extends NatsConsumer implements Dispatcher, Runnable {
         this.subscriptions = new ConcurrentHashMap<>();
         this.running = new AtomicBoolean(false);
         this.waitForMessage = Duration.ofMinutes(5); // This can be long since we aren't doing anything
+        this.allowDuplicateSubscriptions = false;
+    }
+
+    public void setAllowDuplicateSubscriptions(boolean allowDuplicateSubscriptions) {
+        this.allowDuplicateSubscriptions = allowDuplicateSubscriptions;
     }
 
     void start(String id) {
@@ -192,8 +198,7 @@ class NatsDispatcher extends NatsConsumer implements Dispatcher, Runnable {
             sidMap = this.subscriptions.putIfAbsent(subject, new ConcurrentHashMap<>());
         }
 
-        // TODO: Make this configurable (i.e. allow multiple sids).
-        if (sidMap.isEmpty()) {
+        if (this.allowDuplicateSubscriptions || sidMap.isEmpty()) {
             NatsSubscription sub = connection.createSubscription(subject, queueName, this);
             NatsSubscription actual = sidMap.putIfAbsent(sub.getSID(), sub);
             if (actual != null) {

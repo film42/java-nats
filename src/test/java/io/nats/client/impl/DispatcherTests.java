@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -123,7 +124,7 @@ public class DispatcherTests {
             nc.flush(Duration.ofMillis(1000)); // wait for them to go through
 
             done.get(500, TimeUnit.MILLISECONDS);
-            
+
             assertEquals(msgCount, q.size());
         }
     }
@@ -161,7 +162,7 @@ public class DispatcherTests {
             assertEquals(1, q.size());
 
             nc.closeDispatcher(d);
-            
+
             assertFalse(d.isActive());
 
             // This won't arrive
@@ -534,7 +535,7 @@ public class DispatcherTests {
 
             nc.flush(Duration.ofMillis(1000)); // wait for them to go through
             done.get(200, TimeUnit.MILLISECONDS);
-            
+
             assertEquals(msgCount, q.size());
         }
     }
@@ -703,8 +704,42 @@ public class DispatcherTests {
             nc.flush(Duration.ofMillis(500)); // wait for them to go through
 
             done.get(500, TimeUnit.MILLISECONDS);
-            
+
             assertEquals(msgCount, q.size()); // Shoudl only get one since all the extra subs do nothing??
+        }
+    }
+
+    @Test
+    public void testDoubleSubscribeWhenDuplicatesAllowed() throws IOException, InterruptedException, ExecutionException, TimeoutException {
+        try (NatsTestServer ts = new NatsTestServer(false);
+                    Connection nc = Nats.connect(ts.getURI())) {
+            final CompletableFuture<Boolean> done = new CompletableFuture<>();
+            assertTrue("Connected Status", Connection.Status.CONNECTED == nc.getStatus());
+
+            final ConcurrentHashMap<String, Boolean> msgSidMap = new ConcurrentHashMap<>();
+            Dispatcher d = nc.createDispatcher((msg) -> {
+                if (msg.getSubject().equals("done")) {
+                    done.complete(Boolean.TRUE);
+                } else {
+                    msgSidMap.putIfAbsent(msg.getSubscription().getSID(), true);
+                }
+            }, true);
+
+            int subscriptionCount = 5;
+            for (int i = 0; i < subscriptionCount; i++) {
+                d.subscribe("subject");
+            }
+            d.subscribe("done");
+            nc.flush(Duration.ofMillis(500)); // wait for them to go through
+
+            nc.publish("subject", new byte[16]);
+            nc.publish("done", new byte[16]);
+            nc.flush(Duration.ofMillis(500)); // wait for them to go through
+
+            done.get(500, TimeUnit.MILLISECONDS);
+
+            // We should receive a message from each of the 5 subscriptions.
+            assertEquals(subscriptionCount, msgSidMap.size());
         }
     }
 }
