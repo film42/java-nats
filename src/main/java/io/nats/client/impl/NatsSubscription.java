@@ -67,7 +67,7 @@ class NatsSubscription extends NatsConsumer implements Subscription {
         return (max > 0) && (max <= recv);
     }
 
-    String getSID() {
+    public String getSID() {
         return this.sid;
     }
 
@@ -116,7 +116,7 @@ class NatsSubscription extends NatsConsumer implements Subscription {
 
     /**
      * Unsubscribe this subscription and stop listening for messages.
-     * 
+     *
      * <p>Messages are stopped locally and the server is notified.</p>
      */
     public void unsubscribe() {
@@ -137,18 +137,18 @@ class NatsSubscription extends NatsConsumer implements Subscription {
     /**
      * Unsubscribe this subscription and stop listening for messages, after the
      * specified number of messages.
-     * 
+     *
      * <p>If the subscription has already received <code>after</code> messages, it will not receive
      * more. The provided limit is a lifetime total for the subscription, with the caveat
      * that if the subscription already received more than <code>after</code> when unsubscribe is called
      * the client will not travel back in time to stop them.</p>
-     * 
+     *
      * <p>For example, to get a single asynchronous message, you might do:
      * <blockquote><pre>
      * nc = Nats.connect()
      * m = nc.subscribe("hello").unsubscribe(1).nextMessage(Duration.ZERO);
      * </pre></blockquote></p>
-     * 
+     *
      * @param after The number of messages to accept before unsubscribing
      * @return The subscription so that calls can be chained
      */

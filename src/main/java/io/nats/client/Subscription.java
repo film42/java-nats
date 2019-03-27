@@ -21,7 +21,7 @@ import java.time.Duration;
  * subscription can be used for synchronous reading of messages with {@link #nextMessage(Duration) nextMessage()}
  * or the subscription can be owned by a Dispatcher. When a subscription is owned by a dispatcher
  * it cannot be used to get messages or unsubscribe, those operations must be performed on the dispatcher.
- * 
+ *
  * <p>Subscriptions support the concept of auto-unsubscribe. This concept is a bit tricky, as it involves
  * the client library, the server and the Subscriptions history. If told to unsubscribe after 5 messages, a subscription
  * will stop receiving messages when one of the following occurs:
@@ -37,6 +37,11 @@ import java.time.Duration;
  * receive 5 messages on it, then say unsubscribe with a maximum of 5, the subscription will immediately stop handling messages.
  */
 public interface Subscription extends Consumer {
+
+    /**
+     * @return the SID  associated with this subscription, will be non-null.
+     */
+    public String getSID();
 
     /**
      * @return the subject associated with this subscription, will be non-null
@@ -57,14 +62,14 @@ public interface Subscription extends Consumer {
      * Read the next message for a subscription, or block until one is available.
      * While useful in some situations, i.e. tests and simple examples, using a
      * Dispatcher is generally easier and likely preferred for application code.
-     * 
+     *
      * <p>Will return null if the calls times out.
-     * 
-     * 
+     *
+     *
      * <p>Use a timeout of 0 to wait indefinitely. This could still be interrupted if
      * the subscription is unsubscribed or the client connection is closed.
-     * 
-     * 
+     *
+     *
      * @param timeout the maximum time to wait
      * @return the next message for this subscriber or null if there is a timeout
      * @throws IllegalStateException if the subscription belongs to a dispatcher, or is not active
@@ -74,9 +79,9 @@ public interface Subscription extends Consumer {
 
     /**
      * Unsubscribe this subscription and stop listening for messages.
-     * 
+     *
      * <p>Stops messages to the subscription locally and notifies the server.
-     * 
+     *
      * @throws IllegalStateException if the subscription belongs to a dispatcher, or is not active
      */
     public void unsubscribe();
@@ -84,18 +89,18 @@ public interface Subscription extends Consumer {
     /**
      * Unsubscribe this subscription and stop listening for messages, after the
      * specified number of messages.
-     * 
+     *
      * <p>If the subscription has already received <code>after</code> messages, it will not receive
      * more. The provided limit is a lifetime total for the subscription, with the caveat
      * that if the subscription already received more than <code>after</code> when unsubscribe is called
      * the client will not travel back in time to stop them.
-     * 
+     *
      * <p>Supports chaining so that you can do things like:
      * <pre>
      * nc = Nats.connect()
      * m = nc.subscribe("hello").unsubscribe(1).nextMessage(Duration.ZERO);
      * </pre>
-     * 
+     *
      * @param after the number of messages to accept before unsubscribing
      * @return the subscription so that calls can be chained
      * @throws IllegalStateException if the subscription belongs to a dispatcher, or is not active
