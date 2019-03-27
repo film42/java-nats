@@ -32,7 +32,7 @@ class NatsDispatcher extends NatsConsumer implements Dispatcher, Runnable {
 
     private String id;
 
-    private Map<String, NatsSubscription> subscriptions;
+    private Map<String, Map<String, NatsSubscription>> subscriptions;
     private Duration waitForMessage;
 
 
@@ -58,7 +58,7 @@ class NatsDispatcher extends NatsConsumer implements Dispatcher, Runnable {
     public void run() {
         try {
             while (this.running.get()) {
-                
+
                 NatsMessage msg = this.incoming.pop(this.waitForMessage);
 
                 if (msg == null) {
@@ -117,8 +117,10 @@ class NatsDispatcher extends NatsConsumer implements Dispatcher, Runnable {
         }
 
         if (unsubscribeAll) {
-            this.subscriptions.forEach((subj, sub) -> {
-                this.connection.unsubscribe(sub, -1);
+            this.subscriptions.forEach((subject, subIdMap)->{
+                subIdMap.forEach((sid, sub)->{
+                    this.connection.unsubscribe(sub, -1);
+                });
             });
         } else {
             this.subscriptions.clear();
@@ -138,14 +140,20 @@ class NatsDispatcher extends NatsConsumer implements Dispatcher, Runnable {
     }
 
     void resendSubscriptions() {
-        this.subscriptions.forEach((id, sub)->{
-            this.connection.sendSubscriptionMessage(sub.getSID(), sub.getSubject(), sub.getQueueName(), true);
-        });
+       this.subscriptions.forEach((subject, subIdMap)->{
+           subIdMap.forEach((sid, sub)->{
+               this.connection.sendSubscriptionMessage(sub.getSID(), sub.getSubject(), sub.getQueueName(), true);
+           });
+       });
     }
 
     // Called by the connection when the subscription is removed
     void remove(NatsSubscription sub) {
-        subscriptions.remove(sub.getSubject());
+        Map<String, NatsSubscription> sidMap = this.subscriptions.get(sub.getSubject());
+        if (sidMap == null) {
+            return;
+        }
+        sidMap.remove(sub.getSID());
     }
 
     public Dispatcher subscribe(String subject) {
@@ -173,16 +181,21 @@ class NatsDispatcher extends NatsConsumer implements Dispatcher, Runnable {
         if (!this.running.get()) {
             throw new IllegalStateException("Dispatcher is closed");
         }
-        
+
         if (this.isDraining()) {
             throw new IllegalStateException("Dispatcher is draining");
         }
 
-        NatsSubscription sub = subscriptions.get(subject);
+        // Avoid bad timing. Retry if we failed an atomic insert.
+        Map<String, NatsSubscription> sidMap = this.subscriptions.get(subject);
+        while (sidMap == null) {
+            sidMap = this.subscriptions.putIfAbsent(subject, new ConcurrentHashMap<>());
+        }
 
-        if (sub == null) {
-            sub = connection.createSubscription(subject, queueName, this);
-            NatsSubscription actual = subscriptions.putIfAbsent(subject, sub);
+        // TODO: Make this configurable (i.e. allow multiple sids).
+        if (sidMap.isEmpty()) {
+            NatsSubscription sub = connection.createSubscription(subject, queueName, this);
+            NatsSubscription actual = sidMap.putIfAbsent(sub.getSID(), sub);
             if (actual != null) {
                 this.connection.unsubscribe(sub, -1); // Could happen on very bad timing
             }
@@ -207,19 +220,23 @@ class NatsDispatcher extends NatsConsumer implements Dispatcher, Runnable {
         if (subject == null || subject.length() == 0) {
             throw new IllegalArgumentException("Subject is required in unsubscribe");
         }
-        
-        NatsSubscription sub = subscriptions.get(subject);
 
-        if (sub != null) {
-            this.connection.unsubscribe(sub, after); // Connection will tell us when to remove from the map
+        // Unsub from all subscriptions
+        Map<String, NatsSubscription> sidMap = subscriptions.get(subject);
+        if (sidMap != null) {
+            sidMap.forEach((sid, sub)-> {
+                this.connection.unsubscribe(sub, after); // Connection will tell us when to remove from the map
+            });
         }
 
         return this;
     }
 
     void sendUnsubForDrain() {
-        this.subscriptions.forEach((id, sub)->{
-            this.connection.sendUnsub(sub, -1);
+        this.subscriptions.forEach((subName, subIdMap)->{
+            subIdMap.forEach((sid, sub)->{
+                this.connection.sendUnsub(sub, -1);
+            });
         });
     }
 
