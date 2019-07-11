@@ -37,6 +37,7 @@ import io.nats.client.Nats;
 import io.nats.client.NatsTestServer;
 import io.nats.client.Options;
 import io.nats.client.Subscription;
+import io.nats.client.SubscriptionManager;
 import io.nats.client.TestHandler;
 import io.nats.client.ConnectionListener.Events;
 
@@ -104,6 +105,42 @@ public class DrainTests {
             assertTrue(tracker.get(5, TimeUnit.SECONDS)); // wait for the drain to complete
             assertEquals(count.get(), 2); // Should get both
             assertFalse(d.isActive());
+            assertEquals(((NatsConnection) subCon).getConsumerCount(), 0);
+        }
+    }
+
+    @Test
+    public void testSimpleSubscriptionManagerDrain() throws Exception {
+        try (NatsTestServer ts = new NatsTestServer(false);
+                Connection subCon = Nats.connect(new Options.Builder().server(ts.getURI()).maxReconnects(0).build());
+                Connection pubCon = Nats.connect(new Options.Builder().server(ts.getURI()).maxReconnects(0).build())) {
+            assertTrue("Connected Status", Connection.Status.CONNECTED == subCon.getStatus());
+            assertTrue("Connected Status", Connection.Status.CONNECTED == pubCon.getStatus());
+
+            AtomicInteger count = new AtomicInteger();
+            SubscriptionManager sm = subCon.createSubscriptionManager();
+            sm.subscribe("draintest", (msg) -> {
+                count.incrementAndGet();
+                try {
+                    Thread.sleep(2000); // go slow so the main app can drain us
+                } catch (Exception e) {
+
+                }
+            });
+            subCon.flush(Duration.ofSeconds(1)); // Get the sub to the server
+
+            pubCon.publish("draintest", null);
+            pubCon.publish("draintest", null);
+            pubCon.flush(Duration.ofSeconds(1));
+            subCon.flush(Duration.ofSeconds(1));
+
+            // Drain will unsub the subscription manager, only messages that already arrived
+            // are there
+            CompletableFuture<Boolean> tracker = sm.drain(Duration.ofSeconds(4));
+
+            assertTrue(tracker.get(5, TimeUnit.SECONDS)); // wait for the drain to complete
+            assertEquals(count.get(), 2); // Should get both
+            assertFalse(sm.isActive());
             assertEquals(((NatsConnection) subCon).getConsumerCount(), 0);
         }
     }
