@@ -36,6 +36,7 @@ import io.nats.client.NatsServerProtocolMock;
 import io.nats.client.NatsTestServer;
 import io.nats.client.Options;
 import io.nats.client.Subscription;
+import io.nats.client.SubscriptionManager;
 import io.nats.client.TestHandler;
 import io.nats.client.TestSSLUtils;
 import io.nats.client.ConnectionListener.Events;
@@ -81,7 +82,7 @@ public class ReconnectTests {
                 assertTrue("Connected Status", Connection.Status.CONNECTED == nc.getStatus());
 
                 sub = nc.subscribe("subsubject");
-                
+
                 final NatsConnection nnc = nc;
                 Dispatcher d = nc.createDispatcher((msg) -> {
                     nnc.publish(msg.getReplyTo(), msg.getData());
@@ -91,6 +92,15 @@ public class ReconnectTests {
 
                 Future<Message> inc = nc.request("dispatchSubject", "test".getBytes(StandardCharsets.UTF_8));
                 Message msg = inc.get();
+                assertNotNull(msg);
+
+                SubscriptionManager sm = nc.createSubscriptionManager();
+                sm.subscribe("subscriptionManagerSubject", (incMsg) -> {
+                    nnc.publish(incMsg.getReplyTo(), incMsg.getData());
+                });
+
+                inc = nc.request("subscriptionManagerSubject", "test".getBytes(StandardCharsets.UTF_8));
+                msg = inc.get();
                 assertNotNull(msg);
 
                 nc.publish("subsubject", null);
@@ -117,6 +127,11 @@ public class ReconnectTests {
                 // Make sure dispatcher and subscription are still there
                 Future<Message> inc = nc.request("dispatchSubject", "test".getBytes(StandardCharsets.UTF_8));
                 Message msg = inc.get(500, TimeUnit.MILLISECONDS);
+                assertNotNull(msg);
+
+                // Make sure subscription manager and subscription are still there
+                inc = nc.request("subscriptionManagerSubject", "test".getBytes(StandardCharsets.UTF_8));
+                msg = inc.get(500, TimeUnit.MILLISECONDS);
                 assertNotNull(msg);
 
                 // make sure the subscription survived
@@ -160,12 +175,17 @@ public class ReconnectTests {
             checkReconnectingStatus(nc);
 
             sub = nc.subscribe("subsubject");
-                
+
             final NatsConnection nnc = nc;
             Dispatcher d = nc.createDispatcher((msg) -> {
                 nnc.publish(msg.getReplyTo(), msg.getData());
             });
             d.subscribe("dispatchSubject");
+
+            SubscriptionManager sm = nc.createSubscriptionManager();
+            sm.subscribe("subscriptionManagerSubject", (incMsg) -> {
+                nnc.publish(incMsg.getReplyTo(), incMsg.getData());
+            });
 
             handler.prepForStatusChange(Events.RECONNECTED);
 
@@ -176,6 +196,11 @@ public class ReconnectTests {
                 // Make sure dispatcher and subscription are still there
                 Future<Message> inc = nc.request("dispatchSubject", "test".getBytes(StandardCharsets.UTF_8));
                 Message msg = inc.get();
+                assertNotNull(msg);
+
+                // Make sure subscription manager and subscription are still there
+                inc = nc.request("subscriptionManagerSubject", "test".getBytes(StandardCharsets.UTF_8));
+                msg = inc.get();
                 assertNotNull(msg);
 
                 // make sure the subscription survived
@@ -219,7 +244,7 @@ public class ReconnectTests {
                 assertTrue("Connected Status", Connection.Status.CONNECTED == nc.getStatus());
 
                 sub = nc.subscribe("subsubject");
-                
+
                 final NatsConnection nnc = nc;
                 Dispatcher d = nc.createDispatcher((msg) -> {
                     nnc.publish(msg.getReplyTo(), msg.getData());
@@ -412,7 +437,7 @@ public class ReconnectTests {
     public void testOverflowReconnectBuffer() throws Exception {
         Connection nc = null;
         TestHandler handler = new TestHandler();
-        
+
         try {
             try (NatsTestServer ts = new NatsTestServer()) {
                 Options options = new Options.Builder().
@@ -447,7 +472,7 @@ public class ReconnectTests {
         Connection nc = null;
         TestHandler handler = new TestHandler();
         handler.setPrintExceptions(false);
-        
+
         try {
             try (NatsTestServer ts = new NatsTestServer()) {
                 Options options = new Options.Builder().
@@ -492,7 +517,7 @@ public class ReconnectTests {
 
         NatsServerProtocolMock.Customizer receiveMessageCustomizer = (ts, r,w) -> {
             String subLine = "";
-            
+
             System.out.println("*** Mock Server @" + ts.getPort() + " waiting for SUB ...");
             try {
                 subLine = r.readLine();
@@ -564,7 +589,7 @@ public class ReconnectTests {
                     flushAndWait(nc, handler); // mock server will close so we do this inside the curly
                 }
             }
-            
+
 
             assertEquals("reconnect count", 2 * thrashCount, nc.getNatsStatistics().getReconnects());
         } finally {
@@ -620,7 +645,7 @@ public class ReconnectTests {
                                         connectionTimeout(Duration.ofSeconds(5)).
                                         noRandomize().
                                         build();
-            
+
             handler.prepForStatusChange(Events.DISCOVERED_SERVERS);
             nc = (NatsConnection) Nats.connect(options);
             assertTrue("Connected Status", Connection.Status.CONNECTED == nc.getStatus());
