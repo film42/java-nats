@@ -57,6 +57,7 @@ import io.nats.client.NUID;
 import io.nats.client.Options;
 import io.nats.client.Statistics;
 import io.nats.client.Subscription;
+import io.nats.client.SubscriptionManager;
 
 class NatsConnection implements Connection {
     static final byte[] EMPTY_BODY = new byte[0];
@@ -103,6 +104,7 @@ class NatsConnection implements Connection {
     private Map<String, NatsSubscription> subscribers;
     private Map<String, NatsDispatcher> dispatchers; // use a concurrent map so we get more consistent iteration
                                                      // behavior
+    private Map<String, NatsSubscriptionManager> subscriptionManagers;
     private Map<String, CompletableFuture<Message>> responses;
     private ConcurrentLinkedDeque<CompletableFuture<Boolean>> pongQueue;
 
@@ -136,6 +138,7 @@ class NatsConnection implements Connection {
         this.reconnectWaiter.complete(Boolean.TRUE);
 
         this.dispatchers = new ConcurrentHashMap<>();
+        this.subscriptionManagers = new ConcurrentHashMap<>();
         this.subscribers = new ConcurrentHashMap<>();
         this.responses = new ConcurrentHashMap<>();
 
@@ -270,7 +273,7 @@ class NatsConnection implements Connection {
         } catch (Exception exp) {
             this.processException(exp);
         }
-        
+
         // When the flush returns we are done sending internal messages, so we can switch to the
         // non-reconnect queue
         this.writer.setReconnectMode(false);
@@ -670,7 +673,7 @@ class NatsConnection implements Connection {
             throw new IllegalArgumentException("Subject is required in subscribe");
         }
 
-        return createSubscription(subject, null, null);
+        return createSubscription(subject, null, null, null);
     }
 
     public Subscription subscribe(String subject, String queueName) {
@@ -682,7 +685,7 @@ class NatsConnection implements Connection {
             throw new IllegalArgumentException("QueueName is required in subscribe");
         }
 
-        return createSubscription(subject, queueName, null);
+        return createSubscription(subject, queueName, null, null);
     }
 
     void invalidate(NatsSubscription sub) {
@@ -692,6 +695,10 @@ class NatsConnection implements Connection {
 
         if (sub.getNatsDispatcher() != null) {
             sub.getNatsDispatcher().remove(sub);
+        }
+
+        if (sub.getNatsSubscriptionManager() != null) {
+            sub.getNatsSubscriptionManager().remove(sub);
         }
 
         sub.invalidate();
@@ -735,7 +742,7 @@ class NatsConnection implements Connection {
     }
 
     // Assumes the null/empty checks were handled elsewhere
-    NatsSubscription createSubscription(String subject, String queueName, NatsDispatcher dispatcher) {
+    NatsSubscription createSubscription(String subject, String queueName, NatsDispatcher dispatcher, NatsSubscriptionManager subscriptionManager) {
         if (isClosed()) {
             throw new IllegalStateException("Connection is Closed");
         } else if (isDraining() && (dispatcher == null || dispatcher != this.inboxDispatcher.get())) {
@@ -746,7 +753,7 @@ class NatsConnection implements Connection {
         long sidL = nextSid.getAndIncrement();
         String sid = String.valueOf(sidL);
 
-        sub = new NatsSubscription(sid, subject, queueName, this, dispatcher);
+        sub = new NatsSubscription(sid, subject, queueName, this, dispatcher, subscriptionManager);
         subscribers.put(sid, sub);
 
         sendSubscriptionMessage(sid, subject, queueName, false);
@@ -950,6 +957,45 @@ class NatsConnection implements Connection {
         this.dispatchers.remove(nd.getId());
     }
 
+    public SubscriptionManager createSubscriptionManager() {
+        if (isClosed()) {
+            throw new IllegalStateException("Connection is Closed");
+        } else if (isDraining()) {
+            throw new IllegalStateException("Connection is Draining");
+        }
+
+        NatsSubscriptionManager subscriptionManager = new NatsSubscriptionManager(this);
+        String id = this.nuid.next();
+        this.subscriptionManagers.put(id, subscriptionManager);
+        subscriptionManager.start(id);
+        return subscriptionManager;
+    }
+
+    public void closeSubscriptionManager(SubscriptionManager sm) {
+        if (isClosed()) {
+            throw new IllegalStateException("Connection is Closed");
+        } else if (!(sm instanceof NatsSubscriptionManager)) {
+            throw new IllegalArgumentException("Connection can only manage its own subscription managers");
+        }
+
+        NatsSubscriptionManager nsm = ((NatsSubscriptionManager) sm);
+
+        if (nsm.isDraining()) {
+            return; // No op while draining
+        }
+
+        if (!this.subscriptionManagers.containsKey(nsm.getId())) {
+            throw new IllegalArgumentException("ubscriptionManager is already closed.");
+        }
+
+        cleanupSubscriptionManager(nsm);
+    }
+
+    void cleanupSubscriptionManager(NatsSubscriptionManager nsm) {
+        nsm.stop(true);
+        this.subscriptionManagers.remove(nsm.getId());
+    }
+
     public void flush(Duration timeout) throws TimeoutException, InterruptedException {
 
         Instant start = Instant.now();
@@ -1007,13 +1053,13 @@ class NatsConnection implements Connection {
             String connectOptions = this.options.buildProtocolConnectOptionsString(serverURI, info.isAuthRequired(), info.getNonce());
             connectString.append(connectOptions);
             NatsMessage msg = new NatsMessage(connectString.toString());
-            
+
             queueInternalOutgoing(msg);
         } catch (Exception exp) {
             throw new IOException("Error sending connect string", exp);
         }
     }
-    
+
     CompletableFuture<Boolean> sendPing() {
         return this.sendPing(true);
     }
@@ -1021,7 +1067,7 @@ class NatsConnection implements Connection {
     CompletableFuture<Boolean> softPing() {
         return this.sendPing(false);
     }
-    
+
     // Send a ping request and push a pong future on the queue.
     // futures are completed in order, keep this one if a thread wants to wait
     // for a specific pong. Note, if no pong returns the wait will not return
@@ -1171,9 +1217,18 @@ class NatsConnection implements Connection {
         if (sub != null) {
             msg.setSubscription(sub);
 
+            NatsConsumer c = sub;
+            MessageQueue q = sub.getMessageQueue();
             NatsDispatcher d = sub.getNatsDispatcher();
-            NatsConsumer c = (d == null) ? sub : d;
-            MessageQueue q = ((d == null) ? sub.getMessageQueue() : d.getMessageQueue());
+            if (d != null) {
+                c = d;
+                q = d.getMessageQueue();
+            }
+            NatsSubscriptionManager sm = sub.getNatsSubscriptionManager();
+            if (sm != null) {
+                c = sm;
+                q = sm.getMessageQueue();
+            }
 
             if (c.hasReachedPendingLimits()) {
                 // Drop the message and count it
@@ -1544,7 +1599,7 @@ class NatsConnection implements Connection {
         } finally {
             this.statusLock.unlock();
         }
-        
+
         final CompletableFuture<Boolean> tracker = this.draining.get();
         Instant start = Instant.now();
 
@@ -1572,7 +1627,7 @@ class NatsConnection implements Connection {
         });
 
         this.flush(timeout); // Flush and wait up to the timeout, if this fails, let the caller know
-        
+
         consumers.forEach((cons) -> {
             cons.markUnsubedForDrain();
         });
@@ -1590,7 +1645,7 @@ class NatsConnection implements Connection {
                             i.remove();
                         }
                     }
-                    
+
                     if (consumers.size() == 0) {
                         break;
                     }

@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import io.nats.client.Dispatcher;
 import io.nats.client.Message;
 import io.nats.client.Subscription;
+import io.nats.client.SubscriptionManager;
 
 class NatsSubscription extends NatsConsumer implements Subscription {
 
@@ -27,17 +28,19 @@ class NatsSubscription extends NatsConsumer implements Subscription {
     private String sid;
 
     private NatsDispatcher dispatcher;
+    private NatsSubscriptionManager subscriptionManager;
     private MessageQueue incoming;
 
     private AtomicLong unSubMessageLimit;
 
     NatsSubscription(String sid, String subject, String queueName, NatsConnection connection,
-            NatsDispatcher dispatcher) {
+                     NatsDispatcher dispatcher, NatsSubscriptionManager subscriptionManager) {
         super(connection);
         this.subject = subject;
         this.queueName = queueName;
         this.sid = sid;
         this.dispatcher = dispatcher;
+        this.subscriptionManager = subscriptionManager;
         this.unSubMessageLimit = new AtomicLong(-1);
 
         if (this.dispatcher == null) {
@@ -75,12 +78,20 @@ class NatsSubscription extends NatsConsumer implements Subscription {
         return this.dispatcher;
     }
 
+    NatsSubscriptionManager getNatsSubscriptionManager() {
+        return this.subscriptionManager;
+    }
+
     MessageQueue getMessageQueue() {
         return this.incoming;
     }
 
     public Dispatcher getDispatcher() {
         return this.dispatcher;
+    }
+
+    public SubscriptionManager getSubscriptionManager() {
+        return this.subscriptionManager;
     }
 
     public String getSubject() {
@@ -116,7 +127,7 @@ class NatsSubscription extends NatsConsumer implements Subscription {
 
     /**
      * Unsubscribe this subscription and stop listening for messages.
-     * 
+     *
      * <p>Messages are stopped locally and the server is notified.</p>
      */
     public void unsubscribe() {
@@ -137,18 +148,18 @@ class NatsSubscription extends NatsConsumer implements Subscription {
     /**
      * Unsubscribe this subscription and stop listening for messages, after the
      * specified number of messages.
-     * 
+     *
      * <p>If the subscription has already received <code>after</code> messages, it will not receive
      * more. The provided limit is a lifetime total for the subscription, with the caveat
      * that if the subscription already received more than <code>after</code> when unsubscribe is called
      * the client will not travel back in time to stop them.</p>
-     * 
+     *
      * <p>For example, to get a single asynchronous message, you might do:
      * <blockquote><pre>
      * nc = Nats.connect()
      * m = nc.subscribe("hello").unsubscribe(1).nextMessage(Duration.ZERO);
      * </pre></blockquote></p>
-     * 
+     *
      * @param after The number of messages to accept before unsubscribing
      * @return The subscription so that calls can be chained
      */

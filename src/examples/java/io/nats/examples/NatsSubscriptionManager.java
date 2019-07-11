@@ -15,32 +15,32 @@ package io.nats.client.impl;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import io.nats.client.Dispatcher;
+import io.nats.client.SubscriptionManager;
+import io.nats.client.Subscription;
 import io.nats.client.MessageHandler;
 
-class NatsDispatcher extends NatsConsumer implements Dispatcher, Runnable {
-
+class NatsSubscriptionManager extends NatsConsumer implements SubscriptionManager, Runnable {
     private MessageQueue incoming;
-    private MessageHandler handler;
+    private Map<String, MessageHandler> handlers;
+    private Map<String, NatsSubscription> subscriptions;
 
     private Future<Boolean> thread;
     private final AtomicBoolean running;
-
     private String id;
 
-    private Map<String, NatsSubscription> subscriptions;
     private Duration waitForMessage;
 
-
-    NatsDispatcher(NatsConnection conn, MessageHandler handler) {
+    NatsSubscriptionManager(NatsConnection conn) {
         super(conn);
-        this.handler = handler;
         this.incoming = new MessageQueue(true);
         this.subscriptions = new ConcurrentHashMap<>();
+        this.handlers = new ConcurrentHashMap<>();
         this.running = new AtomicBoolean(false);
         this.waitForMessage = Duration.ofMinutes(5); // This can be long since we aren't doing anything
     }
@@ -72,23 +72,24 @@ class NatsDispatcher extends NatsConsumer implements Dispatcher, Runnable {
                 NatsSubscription sub = msg.getNatsSubscription();
 
                 if (sub != null && sub.isActive()) {
+                    MessageHandler handler = this.handlers.get(sub.getSID());
+                    if (handler != null) {
+                        sub.incrementDeliveredCount();
+                        this.incrementDeliveredCount();
 
-                    sub.incrementDeliveredCount();
-                    this.incrementDeliveredCount();
-
-                    try {
-                        handler.onMessage(msg);
-                    } catch (Exception exp) {
-                        this.connection.processException(exp);
+                        try {
+                            handler.onMessage(msg);
+                        } catch (Exception exp) {
+                            this.connection.processException(exp);
+                        }
                     }
-
                     if (sub.reachedUnsubLimit()) {
                         this.connection.invalidate(sub);
                     }
                 }
 
                 if (breakRunLoop()) {
-                    // will set the dispatcher to not active
+                    // will set the group manager to not active
                     return;
                 }
             }
@@ -137,6 +138,10 @@ class NatsDispatcher extends NatsConsumer implements Dispatcher, Runnable {
         return incoming;
     }
 
+    public List<Subscription> getSubscriptions() {
+        return new ArrayList(this.subscriptions.values());
+    }
+
     void resendSubscriptions() {
         this.subscriptions.forEach((id, sub)->{
             this.connection.sendSubscriptionMessage(sub.getSID(), sub.getSubject(), sub.getQueueName(), true);
@@ -145,18 +150,16 @@ class NatsDispatcher extends NatsConsumer implements Dispatcher, Runnable {
 
     // Called by the connection when the subscription is removed
     void remove(NatsSubscription sub) {
-        subscriptions.remove(sub.getSubject());
+        String sid = sub.getSubject();
+        subscriptions.remove(sid);
+        handlers.remove(sid);
     }
 
-    public Dispatcher subscribe(String subject) {
-        if (subject == null || subject.length() == 0) {
-            throw new IllegalArgumentException("Subject is required in subscribe");
-        }
-
-        return this.subscribeImpl(subject, null);
+    public Subscription subscribe(String subject, MessageHandler handler) {
+        return this.subscribeImpl(subject, null, handler);
     }
 
-    public Dispatcher subscribe(String subject, String queueName) {
+    public Subscription subscribe(String subject, String queueName, MessageHandler handler) {
         if (subject == null || subject.length() == 0) {
             throw new IllegalArgumentException("Subject is required in subscribe");
         }
@@ -164,12 +167,15 @@ class NatsDispatcher extends NatsConsumer implements Dispatcher, Runnable {
         if (queueName == null || queueName.length() == 0) {
             throw new IllegalArgumentException("QueueName is required in subscribe");
         }
-        return this.subscribeImpl(subject, queueName);
+
+        if (handler == null) {
+            throw new IllegalArgumentException("MessageHandler is required in subscribe");
+        }
+        return this.subscribeImpl(subject, queueName, handler);
     }
 
-
-    // Assumes the subj/queuename checks are done, does check for closed status
-    Dispatcher subscribeImpl(String subject, String queueName) {
+    // Assumes the subj/queuename/handler checks are done, does check for closed status
+    Subscription subscribeImpl(String subject, String queueName, MessageHandler handler) {
         if (!this.running.get()) {
             throw new IllegalStateException("Dispatcher is closed");
         }
@@ -178,43 +184,44 @@ class NatsDispatcher extends NatsConsumer implements Dispatcher, Runnable {
             throw new IllegalStateException("Dispatcher is draining");
         }
 
-        NatsSubscription sub = subscriptions.get(subject);
+        NatsSubscription sub = connection.createSubscription(subject, queueName, null, this);
+        subscriptions.put(sub.getSID(), sub);
+        handlers.put(sub.getSID(), handler);
 
-        if (sub == null) {
-            sub = connection.createSubscription(subject, queueName, this, null);
-            NatsSubscription actual = subscriptions.putIfAbsent(subject, sub);
-            if (actual != null) {
-                this.connection.unsubscribe(sub, -1); // Could happen on very bad timing
-            }
-        }
-
-        return this;
+        return sub;
     }
 
-    public Dispatcher unsubscribe(String subject) {
-        return this.unsubscribe(subject, -1);
+    public Subscription unsubscribe(Subscription subscription) {
+        return this.unsubscribe(subscription, -1);
     }
 
-    public Dispatcher unsubscribe(String subject, int after) {
+    public Subscription unsubscribe(Subscription subscription, int after) {
         if (!this.running.get()) {
-            throw new IllegalStateException("Dispatcfher is closed");
+            throw new IllegalStateException("SubscriptionManager is closed");
         }
 
         if (isDraining()) { // No op while draining
-            return this;
+            return subscription;
         }
 
-        if (subject == null || subject.length() == 0) {
-            throw new IllegalArgumentException("Subject is required in unsubscribe");
+        if (subscription == null) {
+            throw new IllegalArgumentException("Subscription is required in unsubscribe");
         }
 
-        NatsSubscription sub = subscriptions.get(subject);
+        // We can probably optimize this path by adding getSID() to the Subscription interface.
+        if (!(subscription instanceof NatsSubscription)) {
+            throw new IllegalArgumentException("This Subscription implementation is not known by SubscriptionManager");
+        }
+        NatsSubscription ns = ((NatsSubscription) subscription);
+
+        // Grab the NatsSubscription to verify we weren't given a different manager's subscription.
+        NatsSubscription sub = subscriptions.get(ns.getSID());
 
         if (sub != null) {
             this.connection.unsubscribe(sub, after); // Connection will tell us when to remove from the map
         }
 
-        return this;
+        return subscription;
     }
 
     void sendUnsubForDrain() {
@@ -224,7 +231,7 @@ class NatsDispatcher extends NatsConsumer implements Dispatcher, Runnable {
     }
 
     void cleanUpAfterDrain() {
-        this.connection.cleanupDispatcher(this);
+        this.connection.cleanupSubscriptionManager(this);
     }
 
     public boolean isDrained() {
