@@ -106,6 +106,9 @@ class NatsSubscription extends NatsConsumer implements Subscription {
         if (this.dispatcher != null) {
             throw new IllegalStateException(
                     "Subscriptions that belong to a dispatcher cannot respond to nextMessage directly.");
+        } else if (this.subscriptionManager != null) {
+            throw new IllegalStateException(
+                    "Subscriptions that belong to a subscription manager cannot respond to nextMessage directly.");
         } else if (this.incoming == null) {
             throw new IllegalStateException("This subscription is inactive.");
         }
@@ -134,6 +137,9 @@ class NatsSubscription extends NatsConsumer implements Subscription {
         if (this.dispatcher != null) {
             throw new IllegalStateException(
                     "Subscriptions that belong to a dispatcher cannot respond to unsubscribe directly.");
+        } else if (this.subscriptionManager != null) {
+            throw new IllegalStateException(
+                    "Subscriptions that belong to a subscription manager cannot respond to unsubscribe directly.");
         } else if (this.incoming == null) {
             throw new IllegalStateException("This subscription is inactive.");
         }
@@ -167,6 +173,9 @@ class NatsSubscription extends NatsConsumer implements Subscription {
         if (this.dispatcher != null) {
             throw new IllegalStateException(
                     "Subscriptions that belong to a dispatcher cannot respond to unsubscribe directly.");
+        } else if (this.subscriptionManager != null) {
+            throw new IllegalStateException(
+                    "Subscriptions that belong to a subscription manager cannot respond to unsubscribe directly.");
         } else if (this.incoming == null) {
             throw new IllegalStateException("This subscription is inactive.");
         }

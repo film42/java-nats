@@ -156,6 +156,13 @@ class NatsSubscriptionManager extends NatsConsumer implements SubscriptionManage
     }
 
     public Subscription subscribe(String subject, MessageHandler handler) {
+        if (subject == null || subject.length() == 0) {
+            throw new IllegalArgumentException("Subject is required in subscribe");
+        }
+
+        if (handler == null) {
+            throw new IllegalArgumentException("MessageHandler is required in subscribe");
+        }
         return this.subscribeImpl(subject, null, handler);
     }
 
