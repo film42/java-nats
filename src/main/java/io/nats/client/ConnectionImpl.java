@@ -488,7 +488,7 @@ class ConnectionImpl implements Connection {
     }
 
 
-    BlockingQueue<Message> createMsgChannel() {
+    public BlockingQueue<Message> createMsgChannel() {
         return createMsgChannel(Integer.MAX_VALUE);
     }
 
@@ -1813,7 +1813,7 @@ class ConnectionImpl implements Connection {
      * @param ch      channel
      * @return the Subscription object
      */
-    SubscriptionImpl subscribe(String subject, String queue, MessageHandler cb,
+    public SubscriptionImpl subscribe(String subject, String queue, MessageHandler cb,
                                BlockingQueue<Message> ch) {
         final SubscriptionImpl sub;
         mu.lock();

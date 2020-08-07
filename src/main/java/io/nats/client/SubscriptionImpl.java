@@ -110,7 +110,7 @@ abstract class SubscriptionImpl implements Subscription {
         this.mch = ch;
     }
 
-    boolean isClosed() {
+    public boolean isClosed() {
         // Internal only and assumes lock is held
         return closed;
     }
@@ -164,7 +164,7 @@ abstract class SubscriptionImpl implements Subscription {
         }
     }
 
-    long getSid() {
+    public long getSid() {
 
         return sid;
     }
@@ -382,11 +382,22 @@ abstract class SubscriptionImpl implements Subscription {
         return max;
     }
 
-    void lock() {
+    public void lock() {
         mu.lock();
     }
 
-    void unlock() {
+    public void unlock() {
         mu.unlock();
+    }
+
+    // HACKS
+    public void incrPMsgs(int value) {
+        this.pMsgs += value;
+    }
+    public void incrPBytes(int value) {
+        this.pBytes += value;
+    }
+    public void incrDelivered(long value) {
+        this.delivered += value;
     }
 }

@@ -18,6 +18,15 @@ import java.io.IOException;
  * will be delivered individually to both {@code Subscription} objects.
  */
 public interface Subscription extends AutoCloseable {
+    long getSid();
+    void unlock();
+    void lock();
+    boolean isClosed();
+    void unsubscribe(boolean ignoreInvalid) throws IOException;
+
+    void incrPMsgs(int value);
+    void incrPBytes(int value);
+    void incrDelivered(long value);
 
     /**
      * Retrieves the subject of interest from the {@code Subscription} object.

@@ -8,6 +8,7 @@ package io.nats.client;
 
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.BlockingQueue;
 
 /**
  * A {@code Connection} object is a client's active connection to a NATS server.
@@ -39,6 +40,8 @@ import java.util.concurrent.TimeUnit;
  * </pre>
  */
 public interface Connection extends AbstractConnection {
+    BlockingQueue<Message> createMsgChannel();
+
     /**
      * Publishes the payload specified by {@code data} to the subject specified by {@code subject}.
      *

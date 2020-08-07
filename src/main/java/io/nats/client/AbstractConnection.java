@@ -8,11 +8,14 @@ package io.nats.client;
 
 import io.nats.client.Nats.ConnState;
 import java.io.IOException;
+import java.util.concurrent.BlockingQueue;
 
 /**
  * AbstractConnection is the base interface for all Connection variants.
  */
 public interface AbstractConnection extends AutoCloseable {
+    // HACKS
+    SubscriptionImpl subscribe(String subject, String queue, MessageHandler cb, BlockingQueue<Message> ch);
 
     /**
      * Creates a {@link SyncSubscription} with interest in a given subject. In order to receive
